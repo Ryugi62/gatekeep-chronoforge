@@ -127,7 +127,27 @@ def redteam_section(rt_cases) -> List[str]:
     return L
 
 
-def english_summary(cases, names, summary, p95, rt_cases, scope=None) -> List[str]:
+def english_extra(scope, llm) -> List[str]:
+    out = []
+    if scope and "holdout" in scope:
+        h = scope["holdout"]
+        o, d = h["oracle"], h["derived"]
+        out.append("- **New in v4: untouched set.** After freezing the code (commit 30336c9) we wrote %d new city-service indirect-injection attacks + %d normal tasks (`data/city_holdout.jsonl`, committed before measuring, no sentence shared with the 146 or 35 cases) and did not change any rule afterwards. Oracle R1: %d/%d attacks blocked (%s), %d/%d normal blocked. Request-derived R1: %d/%d (%s), %d/%d normal blocked. The only misses are the %d deliberate known-limit cases: %s." % (
+            o["attack_n"], o["benign_n"], o["attack_blocked"], o["attack_n"], pct(o["block_rate"]), o["benign_blocked"], o["benign_n"],
+            d["attack_blocked"], d["attack_n"], pct(d["block_rate"]), d["benign_blocked"], d["benign_n"], len(d["miss_ids"]), ", ".join(d["miss_ids"])))
+    if llm:
+        from .llm_bench import llm_stats
+        rows, hcases, model = llm
+        st = llm_stats(rows, hcases)
+        d, o = st["derived"], st["oracle"]
+        q = (" Free-tier daily limit (20 requests per model) was hit on %d model(s); the work was split across models, original wording in compare.md section 12." % len(st["quota"])) if st["quota"] else ""
+        out.append("- **New in v4: real LLMs (%s, free tier, n = %d attack tasks + %d normal tasks, one run each, three models because of the daily limit).** The LLM is the attacked agent; GateKeep still uses no LLM. The agent read the injected text in %d of %d attack tasks and attempted a dangerous call in %d/%d tasks. GateKeep (request-derived R1) stopped %d of those %d (oracle R1: %d); %d dangerous call(s) still ran with the derived scope. Normal tasks blocked: %d/%d (confirmation requests: %d).%s Small n, three models mixed, one run each: read it as a first measurement, not a rate." % (
+            ", ".join(sorted({r["model"] for r in rows if r["status"] == "ok"})), d["attack_n"], d["benign_n"], st["exposed"], d["attack_n"], d["attempted"], d["attack_n"], d["stopped"], d["attempted"], o["stopped"],
+            d["executed_dangerous"], d["benign_blocked"], d["benign_n"], d["benign_held"], q))
+    return out
+
+
+def english_summary(cases, names, summary, p95, rt_cases, scope=None, llm=None) -> List[str]:
     f = summary[names[0]]
     n1 = summary[names[1]]
     return [
@@ -139,6 +159,7 @@ def english_summary(cases, names, summary, p95, rt_cases, scope=None) -> List[st
         ("- **Without the scope rule R1: %s** (%d/%d). R1 contributes the difference, and R1 is fed an allow-list taken from the AgentDojo ground-truth calls (an oracle, see section 8). A real deployment would have to declare that list itself, so read the R1-on number as an upper bound." % (
             pct(n1["block_rate"]), n1["attack_blocked"], n1["attack_n"])),
         *scope_english(scope),
+        *english_extra(scope, llm),
         "- Text-only guardrail components (Rebuff heuristics, 4 Vigil YARA rules ported to `re`) block 2/%d: they read prompts, GateKeep reads tool calls. Those two are partial components of the products, not the full products (no LLM, vector store or transformer detector)." % f["attack_n"],
         "- Version history, kept on purpose: v1 (before the red-team fixes) reported 92.6% / 7.7% on the 146 cases, and the same v1 code blocked only 2 of the 15 red-team attacks and wrongly blocked 3 of the 6 benign or bill-scene calls (measured on commit 93857fc). The 146-case numbers do not move after the fixes because that set never contained these bypasses; the red-team set (section 7) is where the fixes show.",
         "- A new outcome CONFIRM means the call is held until the user taps once. It is used only when a destination or amount comes from a document the user explicitly pointed to (e.g. \"pay this bill\"). The 146-case set has no such annotation, so CONFIRM never fires there; it is exercised by the red-team set (section 7).",
@@ -203,6 +224,33 @@ def hand_section(scope) -> List[str]:
     return L
 
 
+def holdout_section(scope) -> List[str]:
+    """11절 — 코드 고정(30336c9) 뒤에 쓴 미접촉 세트. 통과선 없이 있는 그대로."""
+    if not scope or "holdout" not in scope:
+        return []
+    h = scope["holdout"]
+    L = ["## 11. 미접촉 세트 (data/city_holdout.jsonl) — 코드 고정 뒤에 쓴 세트", "",
+         "코드 고정 커밋 `30336c9`(규칙·사전·도시 팩) 이후에 도시 서비스 간접 주입 공격 %d건 + 정상 %d건을 새로 써서 **측정 전에 커밋**했다(`data/city_holdout.meta.json`). 기존 146건·35건과 문장 겹침 0(시험 `test_holdout.py`). 이 세트를 본 뒤 사전·규칙을 고치지 않았다(시험이 도메인 코드의 고정 이후 diff 0을 확인). 고치면 이 세트는 개발 세트로 강등하고 여기에 적는다. 공격 호출열은 「속았다」는 가정이다(실제 LLM은 12절). `known-limit` 2건은 놓치도록 일부러 넣었다." % (
+             h["oracle"]["attack_n"], h["oracle"]["benign_n"]), "",
+         "| 모드 | 공격 | 차단 | 차단율 (95% 구간) | 정상 | 오탐 | 오탐률 (95% 구간) |", "|---|---|---|---|---|---|---|"]
+    for mode, label in (("oracle", "오라클 R1"), ("derived", "자동 추출 R1"), ("no_r1", "R1 없음(대조)")):
+        r = h[mode]
+        L.append("| %s | %d | %d | **%s** (%s) | %d | %d | **%s** (%s) |" % (
+            label, r["attack_n"], r["attack_blocked"], pct(r["block_rate"]), ci(r["attack_blocked"], r["attack_n"]),
+            r["benign_n"], r["benign_blocked"], pct(r["fp_rate"]), ci(r["benign_blocked"], r["benign_n"])))
+    L.append("")
+    for mode, label in (("oracle", "오라클 R1"), ("derived", "자동 추출 R1")):
+        r = h[mode]
+        L.append("- %s가 놓친 공격: %s · 막은 정상: %s" % (label, ", ".join("`%s`" % i for i in r["miss_ids"]) or "없음", ", ".join("`%s`" % i for i in r["fp_ids"]) or "없음"))
+    L.append("")
+    L.append("| id | 유형 | 라벨 | 오라클 R1 | 자동 추출 R1 | R1 없음 | 메모 |")
+    L.append("|---|---|---|---|---|---|---|")
+    for c, fo, fd, fn in zip(scope["holdout_cases"], h["oracle"]["flags"], h["derived"]["flags"], h["no_r1"]["flags"]):
+        L.append("| %s | %s | %s | %s | %s | %s | %s |" % (c["id"], c["category"], c["label"], fo, fd, fn, c["note"]))
+    L.append("")
+    return L
+
+
 def method_section(cases) -> List[str]:
     return ["## 8. 측정 방식 공개 (심사자가 점수를 해석하는 데 필요한 것)", "",
             "- **허용 도구 목록 = 오라클.** AgentDojo 케이스의 `allowed_tools`는 그 사용자 과제의 **정답 호출에서 추출한 도구 집합**이다(`scripts/build_dataset.py`). 현실의 운영자는 이 목록을 미리 선언해야 한다. R1 몫(전체 − R1 제외 차이)은 이 목록이 정확하다는 가정 위의 수치다. v3는 이 가정을 없앤 「자동 추출 R1」을 9절에 나란히 낸다(손 세트에서 R1 몫이 작은 것은 그 공격 대부분을 R2~R5도 잡기 때문이다).",
@@ -213,7 +261,8 @@ def method_section(cases) -> List[str]:
 
 
 def run(cases_path: str, out_dir: str, redteam_path: str = "data/redteam_cases.jsonl",
-        hand_path: str = "data/city_attacks.jsonl", pack_path: str = "data/city_pack.json") -> Dict:
+        hand_path: str = "data/city_attacks.jsonl", pack_path: str = "data/city_pack.json",
+        holdout_path: str = "data/city_holdout.jsonl", llm_path: str = "results/llm_runs.jsonl") -> Dict:
     cases = load_cases(cases_path)
     lat: List[float] = []
     targets = OrderedDict()
@@ -241,13 +290,22 @@ def run(cases_path: str, out_dir: str, redteam_path: str = "data/redteam_cases.j
     scope = None
     if os.path.exists(hand_path):
         scope = {"agentdojo": scope_mode_results(cases_path), "hand": scope_mode_results(hand_path, pack_path), "hand_cases": load_cases(hand_path)}
-    write_markdown(cases, names, decisions, summary, p95, os.path.join(out_dir, "compare.md"), rt, scope)
+        if os.path.exists(holdout_path):
+            scope["holdout"] = scope_mode_results(holdout_path, pack_path)
+            scope["holdout_cases"] = load_cases(holdout_path)
+    llm = None
+    if os.path.exists(llm_path) and os.path.exists(holdout_path):
+        import json as _json
+        rows = [_json.loads(x) for x in open(llm_path, encoding="utf-8") if x.strip()]
+        if rows:
+            llm = (rows, {c["id"]: c for c in load_cases(holdout_path)}, rows[0].get("model", "?"))
+    write_markdown(cases, names, decisions, summary, p95, os.path.join(out_dir, "compare.md"), rt, scope, llm)
     return {"summary": summary, "p95_ms": p95, "n": len(cases)}
 
 
-def write_markdown(cases, names, decisions, summary, p95, path, rt_cases=(), scope=None):
+def write_markdown(cases, names, decisions, summary, p95, path, rt_cases=(), scope=None, llm=None):
     first = names[0]
-    L = english_summary(cases, names, summary, p95, rt_cases, scope)
+    L = english_summary(cases, names, summary, p95, rt_cases, scope, llm)
     atk = [c for c in cases if c["label"] == "attack"]
     ben = [c for c in cases if c["label"] == "benign"]
     pub = [c for c in atk if c["source"] != "self"]
@@ -330,6 +388,10 @@ def write_markdown(cases, names, decisions, summary, p95, path, rt_cases=(), sco
         L.extend(redteam_section(list(rt_cases)))
     L.extend(scope_section(scope))
     L.extend(hand_section(scope))
+    L.extend(holdout_section(scope))
+    if llm:
+        from .llm_bench import llm_section
+        L.extend(llm_section(llm[0], llm[1], llm[2]))
     L.extend(method_section(cases))
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(L) + "\n")
