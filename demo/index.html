@@ -52,6 +52,7 @@ td,th{text-align:left;padding:8px;border-top:1px solid var(--line);vertical-alig
 <label for="unt">4. Untrusted text the agent read <span class="hint">optional (web page, email, tool output); rule R2 compares destinations against it</span></label>
 <textarea id="unt" style="min-height:70px"></textarea>
 <label class="chk" for="cited"><input type="checkbox" id="cited"> The user explicitly pointed to this text (e.g. "pay this bill"). Values read from it ask for a one-tap confirmation instead of a block.</label>
+<label class="chk" for="derive"><input type="checkbox" id="derive"> Ignore field 2 and derive the allowed tools from the request sentence alone (rule-based verb and object dictionary, no model). The result shows which tools it derived.</label>
 
 <div class="row"><button type="button" class="go" id="check">Check</button></div>
 <div id="out" aria-live="polite"></div>
@@ -102,7 +103,11 @@ function check(){
   if(!Array.isArray(calls)) calls=[calls];
   if(!calls.length || calls.some(function(c){return !c || typeof c.tool!=="string";})){ out.innerHTML='<div class="card">Each tool call needs a "tool" string.</div>'; return; }
   var task={userRequest:$("req").value, allowedTools:$("tools").value.split(/[,\n]/).map(function(s){return s.trim();}).filter(Boolean), untrustedTexts:$("unt").value?[$("unt").value]:[], citedSources:($("cited").checked&&$("unt").value)?[$("unt").value]:[]};
-  var res=GateKeep.guard(task,calls), html="";
+  var opts={}, derived=$("derive").checked;
+  if(derived){ var cat={}; task.allowedTools.concat(calls.map(function(c){return c.tool;})).forEach(function(n){cat[n]=1;}); opts={deriveScope:true,catalog:Object.keys(cat)}; }
+  var res=GateKeep.guard(task,calls,opts), html="";
+  if(derived){ var pol=GateKeep.makePolicy(1000,"/workspace"), c2={}; Object.keys(cat).forEach(function(n){var r=pol.riskOf(n); if(r) c2[n]=r;});
+    html+='<p class="hint">Allowed tools derived from the request: <code>'+esc(GateKeep.extractAllowed(task.userRequest,c2).join(", ")||"(none)")+'</code></p>'; }
   res.forEach(function(v){
     html+='<div class="card"><span class="v '+v.action+'">'+v.action+'</span><code>'+esc(v.tool)+'</code> <span class="hint">risk class: '+esc(v.risk)+'</span>';
     if(v.evidences.length){

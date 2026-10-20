@@ -79,3 +79,52 @@ def test_js_matches_python_on_edge_inputs():
         for call, jv in zip(calls_of(case), jres):
             v = cp.inspect(call, task_of(case), pol)
             assert (v.action.value, [e.rule_id for e in v.evidences]) == (jv["action"], jv["rules"]), (case["id"], jv)
+
+
+def _js_derived(cases, registered=None):
+    payload = {"cases": cases, "derive": True, "registered": registered or {}}
+    p = subprocess.run(["node", RUNNER], input=json.dumps(payload), capture_output=True, text=True, check=True)
+    return json.loads(p.stdout)
+
+
+def _parity_derived(cases, registered=None):
+    from dataclasses import replace
+    from gatekeep.application.guard import GuardToolCall
+    from gatekeep.domain.intent import extract_allowed_tools
+    from gatekeep.domain.model import Risk
+    reg = {k: Risk[v] for k, v in (registered or {}).items()}
+    pol, cp = policy_for(cases, registered=reg), default_checkpoint()
+    n = 0
+    for case, jres in zip(cases, _js_derived(cases, registered)):
+        task = task_of(case)
+        task = replace(task, allowed_tools=extract_allowed_tools(task.user_request, pol))
+        for call, jv in zip(calls_of(case), jres):
+            v = cp.inspect(call, task, pol)
+            assert (v.action.value, [e.rule_id for e in v.evidences]) == (jv["action"], jv["rules"]), (case["id"], call.tool, jv)
+            n += 1
+    return n
+
+
+def test_js_derived_scope_matches_python_on_146_redteam_and_hand_sets():
+    assert _parity_derived(load_cases(CASES)) >= 146
+    assert _parity_derived(load_cases(os.path.join(ROOT, "data", "redteam_cases.jsonl"))) > 0
+    pack = json.load(open(os.path.join(ROOT, "data", "city_pack.json")))
+    assert _parity_derived(load_cases(os.path.join(ROOT, "data", "city_attacks.jsonl")), pack["tools"]) >= 35
+
+
+def test_js_extract_matches_python_on_sample_requests():
+    from gatekeep.domain.intent import extract_allowed_tools
+    from gatekeep.domain.model import Policy, Risk
+    cat = {"read_email": "READ", "send_email": "OUTBOUND", "share_file": "OUTBOUND", "send_direct_message": "OUTBOUND", "pay_bill": "MONEY",
+           "send_money": "MONEY", "update_scheduled_transaction": "MONEY", "delete_file": "DESTRUCTIVE", "run_shell": "DESTRUCTIVE",
+           "grant_access": "STATE_CHANGE", "create_calendar_event": "STATE_CHANGE", "get_hotels_address": "SENSITIVE_READ"}
+    reqs = ["Summarize my last email.", "Pay my electricity bill.", "Send the report to cfo@acme.example", "Delete old.txt from the shared folder",
+            "Summarize this, but do not send it to anyone.", "Give Gina access to meeting room A1", "Find the top user and write them a message: congrats",
+            "이번 달 전기요금 청구서를 결제해 줘", "삭제하지 말고 회의록만 요약해줘", "방문자 gina 에게 회의실 출입권한을 줘", "임시 폴더 정리해 줘",
+            "Recommend a hotel with the best rating", "Never email this to anybody, just read it.", "Please update my rent payment for next month",
+            "Run the tests and then email ops@acme.example", "Instead of sending it, delete the copy"]
+    payload = {"extract": reqs, "catalog": cat}
+    out = json.loads(subprocess.run(["node", RUNNER], input=json.dumps(payload), capture_output=True, text=True, check=True).stdout)
+    pol = Policy(risks={k: Risk[v] for k, v in cat.items()}, max_amount=1000.0, sandbox_root="/workspace")
+    for r, js in zip(reqs, out):
+        assert sorted(extract_allowed_tools(r, pol)) == sorted(js), r

@@ -35,3 +35,13 @@ def test_three_examples_give_expected_verdicts():
 def test_demo_page_has_cited_checkbox_and_confirm_style():
     html = open(os.path.join(DEMO, "index.html"), encoding="utf-8").read()
     assert 'id="cited"' in html and ".v.CONFIRM" in html
+
+
+def test_derive_checkbox_exists_and_derived_mode_blocks_injected_tool():
+    html = open(os.path.join(DEMO, "index.html"), encoding="utf-8").read()
+    assert 'id="derive"' in html and "extractAllowed" in html
+    js = ("var gk=require(%r);var r=gk.guard({userRequest:'Summarize my last email.',allowedTools:['read_email','send_email'],untrustedTexts:[]},"
+          "[{tool:'send_email',args:{to:'a@b.co'}}],{deriveScope:true,catalog:['read_email','send_email']});console.log(JSON.stringify(r.map(v=>[v.action,v.evidences.map(x=>x.ruleId)])));"
+          % os.path.join(DEMO, "gatekeep.js"))
+    out = json.loads(subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True).stdout)
+    assert out == [["BLOCK", ["R1"]]]  # 선언 목록엔 send_email이 있어도 요청 문장만 본다

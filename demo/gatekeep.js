@@ -245,14 +245,116 @@
     var hard = evs.some(function (e) { return !e.confirm; });
     return { action: !evs.length ? "ALLOW" : (hard ? "BLOCK" : "CONFIRM"), tool: call.tool, risk: policy.riskOf(call.tool), evidences: evs };
   }
+
+  // ---- Request-derived scope (port of gatekeep/domain/intent.py): allowed tools extracted from the user's request, no oracle, no model ----
+  var EN = {};
+  function addC(concept, ws) { ws.split(" ").forEach(function (w) { (EN[w] = EN[w] || new Set()).add(concept); }); }
+  addC("PAY", "pay paid transfer wire remit settle refund purchase buy bought checkout donate withdraw deposit reimburse");
+  addC("SEND", "send sent forward reply respond share notify dm submit upload publish broadcast export post tweet");
+  addC("DELETE", "delete remove erase wipe trash purge clear discard destroy drop clean unlink truncate overwrite");
+  addC("GRANT", "grant give unlock invite add assign authorize approve allow enable");
+  addC("UPDATE", "update change edit modify set rename reschedule adjust reset replace");
+  addC("CREATE", "create schedule book reserve make register issue generate add enroll set setup");
+  addC("CANCEL", "cancel revoke disable terminate stop unsubscribe leave remove");
+  addC("RUN", "run execute exec shell command launch test build compile install");
+  var I_MONEY = new Set(["money","funds","fund","payment","payments","transaction","transactions","bill","bills","invoice","invoices","amount","rent","fee","fees","tax","taxes","fine","fare","cash","salary","refund","deposit"]);
+  var KO_MONEY = ["청구서","요금","세금","월세","관리비","계약금","대금","견적서","송금","이체"];
+  var MESSAGE_NOUNS = new Set(["message","email","mail","note","reply","dm"]);
+  var WRITE_VERBS = new Set(["write","compose","draft","leave","drop"]);
+  var NEGATORS = new Set(["not","dont","don't","never","without","no","cannot","can't","won't","shouldn't","avoid","nor","didn't"]);
+  var VERB_LEAD = new Set(["to","please","and","then","can","could","will","would","should","must","also","just","pls"].concat(Array.from(NEGATORS)));
+  var ADJ_NOUNS = new Set(["folder","drive","inbox","calendar","file","files","doc","docs","document","link","account","channel","mail","email","emails","items"]);
+  var AMOUNT_RE = /(?:[$₹€]\s?\d|(?<![\p{L}\p{N}_])\d[\d,]*(?:\.\d+)?\s?(?:usd|inr|eur|dollars?|rupees?|rs|원)(?![\p{L}\p{N}_]))/iu;
+  var KO = [["결제","PAY"],["이체","PAY"],["송금","PAY"],["납부","PAY"],["지불","PAY"],["입금","PAY"],["보내","SEND"],["발송","SEND"],["공유","SEND"],["전달","SEND"],["회신","SEND"],
+    ["지워","DELETE"],["지우","DELETE"],["삭제","DELETE"],["비워","DELETE"],["제거","DELETE"],["돌려","RUN"],["실행","RUN"],["수정","UPDATE"],["변경","UPDATE"],["바꿔","UPDATE"],["고쳐","UPDATE"],
+    ["등록","CREATE"],["생성","CREATE"],["만들어","CREATE"],["취소","CANCEL"],["해지","CANCEL"]];
+  var KO_NEG = ["지 마","지마","말고","말아","금지","하지 않"];
+  var FILE_CUES = ["폴더","파일","캐시","임시","다운로드","로그"];
+  var GENERIC_NAME = new Set(["get","search","read","list","view","fetch","find","show","check","lookup","access","all","most","recent","in","for","of","the","and","to","by","per","with","user","users","current","available","visit","browse"]);
+  var EMPTY = new Set();
+  function lookupC(tok) {
+    var cands = [tok], sufs = [["ies","y"],["ied","y"],["es",""],["ed",""],["ing",""],["ing","e"],["s",""],["d",""]];
+    sufs.forEach(function (sr) {
+      var suf = sr[0], rep = sr[1];
+      if (tok.length >= suf.length && tok.slice(tok.length - suf.length) === suf && tok.length - suf.length >= 2) {
+        var c = tok.slice(0, tok.length - suf.length) + rep;
+        cands.push(c);
+        if (c.length > 2 && c.charAt(c.length - 1) === c.charAt(c.length - 2)) cands.push(c.slice(0, -1));
+      }
+    });
+    for (var i = 0; i < cands.length; i++) if (Object.prototype.hasOwnProperty.call(EN, cands[i])) return EN[cands[i]];
+    return EMPTY;
+  }
+  function anyIn(arr, set) { return arr.some(function (x) { return set.has(x); }); }
+  function requestConcepts(request) {
+    var text = request.toLowerCase(), toks = text.match(/[a-z']+/g) || [], found = new Set();
+    toks.forEach(function (tok, i) {
+      var cs = lookupC(tok);
+      if (tok === "email" || tok === "mail") cs = (i === 0 || VERB_LEAD.has(toks[i - 1])) ? new Set(["SEND"]) : EMPTY;
+      if ((tok === "message" || tok === "dm") && !(i + 1 < toks.length && ["them","him","her","us","everyone","all"].indexOf(toks[i + 1]) >= 0)) cs = EMPTY;
+      if (WRITE_VERBS.has(tok) && anyIn(toks.slice(i + 1, i + 5), MESSAGE_NOUNS)) cs = new Set(["SEND"]);
+      if ((tok.slice(-2) === "ed" || tok === "sent") && i + 1 < toks.length && ADJ_NOUNS.has(toks[i + 1])) return;
+      if (!cs.size) return;
+      if (anyIn(toks.slice(Math.max(0, i - 3), i), NEGATORS)) return;
+      var p2 = toks.slice(Math.max(0, i - 2), i);
+      if (p2.length === 2 && p2[0] === "instead" && p2[1] === "of") return;
+      cs.forEach(function (c) { found.add(c); });
+    });
+    KO.forEach(function (kc) {
+      var from = 0, idx;
+      while ((idx = request.indexOf(kc[0], from)) >= 0) {
+        var end = idx + kc[0].length, tail = request.slice(end, end + 12);
+        if (!KO_NEG.some(function (n) { return tail.indexOf(n) >= 0; })) found.add(kc[1]);
+        from = end;
+      }
+    });
+    if (request.indexOf("알려") >= 0 && (request.indexOf("메일") >= 0 || request.indexOf("에게") >= 0 || request.indexOf("한테") >= 0 || request.indexOf("@") >= 0)) found.add("SEND");
+    if (request.indexOf("권한") >= 0 && ["줘","주세요","부여","허용","열어"].some(function (k) { return request.indexOf(k) >= 0; })) found.add("GRANT");
+    if (request.indexOf("정리") >= 0 && FILE_CUES.some(function (c) { return request.indexOf(c) >= 0; })) found.add("DELETE");
+    var money = toks.some(function (t) { return I_MONEY.has(t); }) || KO_MONEY.some(function (n) { return request.indexOf(n) >= 0; }) || AMOUNT_RE.test(request);
+    if (found.has("SEND") && money) found.add("PAY");
+    return { concepts: found, money: money };
+  }
+  function nameWords(name) { return name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/_/g, " ").replace(/-/g, " ").split(/\s+/).filter(Boolean).map(function (w) { return w.toLowerCase(); }); }
+  function toolConcepts(name) {
+    var ws = nameWords(name), money = ws.some(function (w) { return I_MONEY.has(w); }), out = new Set();
+    ws.forEach(function (w) {
+      var cs = Array.from(lookupC(w));
+      if (money && cs.indexOf("SEND") >= 0) cs = cs.filter(function (c) { return c !== "SEND"; }).concat(["PAY"]);
+      cs.forEach(function (c) { out.add(c); });
+    });
+    return { concepts: out, money: money };
+  }
+  function stemW(w) { return (w.slice(-1) === "s" && w.length > 3) ? w.slice(0, -1) : w; }
+  function objectWords(name) { var o = new Set(); nameWords(name).forEach(function (w) { if (!GENERIC_NAME.has(w)) o.add(stemW(w)); }); return o; }
+  // catalog: {toolName: riskString}. Returns the list of allowed non-READ tools.
+  function extractAllowed(userRequest, catalog) {
+    var rq = requestConcepts(userRequest), allowed = [];
+    var reqStems = new Set((userRequest.toLowerCase().match(/[a-z]+/g) || []).map(stemW));
+    Object.keys(catalog).forEach(function (name) {
+      var risk = catalog[name];
+      if (risk === "READ") return;
+      if (risk === "SENSITIVE_READ") { if (Array.from(objectWords(name)).some(function (w) { return reqStems.has(w); })) allowed.push(name); return; }
+      var tc = toolConcepts(name);
+      if (!Array.from(tc.concepts).some(function (c) { return rq.concepts.has(c); })) return;
+      if (tc.money && !rq.concepts.has("PAY") && !rq.money) return;
+      allowed.push(name);
+    });
+    return allowed;
+  }
   // Task: {userRequest, allowedTools:[...], untrustedTexts:[...]}; calls: [{tool,args}]
   function guard(task, calls, opts) {
     opts = opts || {};
     var pol = makePolicy(opts.maxAmount === undefined ? 1000 : opts.maxAmount, opts.sandboxRoot || "/workspace", opts.registered);
-    task = { userRequest: task.userRequest, allowedTools: task.allowedTools, untrustedTexts: task.untrustedTexts || [], citedSources: task.citedSources || [] };
+    var allowedTools = task.allowedTools;
+    if (opts.deriveScope) { // allow-list from the request sentence only; the declared list is ignored
+      var cat = {}; (opts.catalog || []).forEach(function (n) { var r = pol.riskOf(n); if (r) cat[n] = r; });
+      allowedTools = extractAllowed(task.userRequest, cat);
+    }
+    task = { userRequest: task.userRequest, allowedTools: allowedTools, untrustedTexts: task.untrustedTexts || [], citedSources: task.citedSources || [] };
     return calls.map(function (c) { return inspect({ tool: c.tool, args: c.args || {} }, task, pol); });
   }
 
-  var api = { guard: guard, inferRisk: inferRisk, rules: rules.map(function (r) { return { id: r.id, name: r.name }; }) };
+  var api = { guard: guard, inferRisk: inferRisk, extractAllowed: extractAllowed, makePolicy: makePolicy, rules: rules.map(function (r) { return { id: r.id, name: r.name }; }) };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.GateKeep = api;
 })(typeof self !== "undefined" ? self : this);

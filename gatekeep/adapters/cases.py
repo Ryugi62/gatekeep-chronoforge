@@ -13,9 +13,9 @@ def load_cases(path: str) -> List[Dict]:
         return [json.loads(line) for line in f if line.strip()]
 
 
-def policy_for(cases: List[Dict], max_amount: float = 1000.0, sandbox_root: str = "/workspace") -> Policy:
+def policy_for(cases: List[Dict], max_amount: float = 1000.0, sandbox_root: str = "/workspace", registered=None) -> Policy:
     names = {c_["tool"] for c in cases for c_ in c["calls"]} | {t for c in cases for t in c["allowed_tools"]}
-    return build_policy(sorted(names), max_amount, sandbox_root)
+    return build_policy(sorted(names), max_amount, sandbox_root, registered)
 
 
 def task_of(case: Dict) -> Task:
