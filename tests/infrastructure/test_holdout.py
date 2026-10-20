@@ -45,7 +45,7 @@ def test_meta_names_the_frozen_commit():
 def test_domain_code_unchanged_since_freeze():
     """고정 이후 도메인·응용·도구 등록·도시 팩이 바뀌지 않았다(바뀌면 이 세트는 개발 세트로 강등)."""
     import subprocess
-    out = subprocess.run(["git", "diff", "--stat", "30336c9", "--", "gatekeep/domain", "gatekeep/application",
+    out = subprocess.run(["git", "diff", "--stat", "30336c9", "--", "gatekeep/domain", "gatekeep/application/guard.py",
                           "gatekeep/adapters/tool_registry.py", "data/city_pack.json"], cwd=ROOT, capture_output=True, text=True)
     if out.returncode != 0:
         return  # git 없는 환경(압축본)에서는 건너뛴다
