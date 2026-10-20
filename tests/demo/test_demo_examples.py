@@ -1,0 +1,30 @@
+"""데모 예시 3개(정상·주입·유출)가 index.html에 있고 기대 판정을 낸다."""
+import json
+import os
+import re
+import shutil
+import subprocess
+
+import pytest
+
+DEMO = os.path.join(os.path.dirname(__file__), "..", "..", "demo")
+pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node 필요")
+
+
+def test_index_is_static_and_has_inputs():
+    html = open(os.path.join(DEMO, "index.html"), encoding="utf-8").read()
+    for el in ('id="req"', 'id="tools"', 'id="calls"', 'id="check"'):
+        assert el in html
+    assert not re.search(r'(src|href)="https?://', html)  # 외부 서버 없음
+
+
+def test_three_examples_give_expected_verdicts():
+    html = open(os.path.join(DEMO, "index.html"), encoding="utf-8").read()
+    script = html.split("<script>")[-1].split("</script>")[0]
+    js = "var gk=require(%r);var window={};%s;" % (os.path.join(DEMO, "gatekeep.js"), script.split("function $")[0])
+    js += ("var r={};for(var k in EX){var e=EX[k];r[k]=gk.guard({userRequest:e.req,allowedTools:e.tools.split(/[,\\n]/).map(s=>s.trim()).filter(Boolean),"
+           "untrustedTexts:e.unt?[e.unt]:[]},[].concat(JSON.parse(e.calls))).map(v=>[v.action,v.evidences.map(x=>x.ruleId)]);}console.log(JSON.stringify(r));")
+    out = json.loads(subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True).stdout)
+    assert out["benign"] == [["ALLOW", []]]
+    assert out["inject"][0] == ["ALLOW", []] and out["inject"][1][0] == "BLOCK" and "R1" in out["inject"][1][1]
+    assert out["leak"][0][0] == "BLOCK" and "R5" in out["leak"][0][1]
