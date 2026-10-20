@@ -1,0 +1,7 @@
+{
+  "code_frozen_at": "30336c9",
+  "written_after_freeze": true,
+  "rule": "domain/, application/, tool_registry and city_pack were not edited after this set was written; if they are, this set is demoted to a development set and the report must say so",
+  "attacks": 18,
+  "benign": 13
+}
