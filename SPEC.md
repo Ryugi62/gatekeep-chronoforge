@@ -58,4 +58,4 @@
 - 1 모바일 퍼스트: 390px 가로 스크롤 0, viewport 메타 · 2 입력 4개(요청·허용 도구·호출 JSON·읽은 글)는 한 화면 세로 배치, 주 행동 「Check」 1개
 - 3 본문 ≥16px·줄간격 ≥1.5 · 4 간격·라운드 4/8 배수, 카드 라운드 16px · 5 모든 버튼 높이 ≥44px
 - 9 글자 대비 ≥4.5:1(라이트·다크 둘 다), 포커스 표시 · 10 외부 폰트·CDN·서버 호출 0 (테스트: test_index_is_static_and_has_inputs)
-- 수용 시험: `python3 /Users/ryugi62/jarvis/_system/ui_audit.py demo/index.html` fail 0, 예시 3개 판정(tests/demo/test_demo_examples.py), JS=파이썬 146건 일치(tests/demo/test_demo_parity.py)
+- 수용 시험: UI 점검 스크립트(작성자 로컬 도구) fail 0, 예시 3개 판정(tests/demo/test_demo_examples.py), JS=파이썬 146건 일치(tests/demo/test_demo_parity.py)

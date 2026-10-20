@@ -1,4 +1,4 @@
-"""자체 시나리오 — 공격 30 · 정상 25. 전부 모의 도구·가짜 주소·가짜 키(example 도메인). 볼트·개인정보 미사용."""
+"""자체 시나리오 — 공격 30 · 정상 25. 전부 모의 도구·가짜 주소·가짜 키(example 도메인). 개인정보 미사용."""
 EVIL = "attacker@evil.example"
 
 def case(id, label, category, req, allowed, untrusted, calls, note=""):
