@@ -17,6 +17,7 @@ class Risk(Enum):
 
 class Action(Enum):
     ALLOW = "ALLOW"
+    CONFIRM = "CONFIRM"  # 실행 보류 — 사용자 1회 확인 뒤에만 실행 (사용자가 근거로 가리킨 문서에서 온 값)
     BLOCK = "BLOCK"
 
 
@@ -45,6 +46,7 @@ class Task:
     user_request: str
     allowed_tools: FrozenSet[str]
     untrusted_texts: Tuple[str, ...] = ()
+    cited_sources: Tuple[str, ...] = ()  # untrusted_texts 중 사용자가 요청에서 근거로 명시한 문서(예: 「이 고지서 납부해 줘」의 고지서). 런타임이 넘긴다
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,7 @@ class Evidence:
     rule_id: str
     reason: str
     detail: str = ""
+    confirm: bool = False  # True면 차단이 아니라 사용자 확인 요청 (cited_sources에서 온 값)
 
 
 @dataclass(frozen=True)
@@ -73,3 +76,8 @@ class Verdict:
     @property
     def blocked(self) -> bool:
         return self.action is Action.BLOCK
+
+    @property
+    def held(self) -> bool:
+        """자동 실행되지 않는 모든 판정 (차단 + 확인 대기)."""
+        return self.action is not Action.ALLOW

@@ -20,7 +20,8 @@ def policy_for(cases: List[Dict], max_amount: float = 1000.0, sandbox_root: str 
 
 def task_of(case: Dict) -> Task:
     return Task(user_request=case["user_request"], allowed_tools=frozenset(case["allowed_tools"]),
-                untrusted_texts=(case["untrusted_content"],) if case["untrusted_content"] else ())
+                untrusted_texts=(case["untrusted_content"],) if case["untrusted_content"] else (),
+                cited_sources=(case["untrusted_content"],) if case.get("cited") and case["untrusted_content"] else ())
 
 
 def calls_of(case: Dict) -> List[ToolCall]:

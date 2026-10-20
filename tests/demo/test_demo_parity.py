@@ -39,6 +39,20 @@ def test_js_matches_python_domain_on_all_146_cases():
     assert mismatches == 0
 
 
+def test_js_matches_python_on_redteam_cases_and_expectations():
+    """레드팀 우회·대표 장면 케이스: 호출 단위로 파이썬과 일치 + expect(최악 판정)도 JS가 만족."""
+    rt = load_cases(os.path.join(ROOT, "data", "redteam_cases.jsonl"))
+    pol, cp = policy_for(rt), default_checkpoint()
+    order = {"ALLOW": 0, "CONFIRM": 1, "BLOCK": 2}
+    for case, jres in zip(rt, _js(rt)):
+        task = task_of(case)
+        for call, jv in zip(calls_of(case), jres):
+            v = cp.inspect(call, task, pol)
+            risk = pol.risk_of(call.tool)
+            assert (v.action.value, [e.rule_id for e in v.evidences], risk.value if risk else None) == (jv["action"], jv["rules"], jv["risk"]), (case["id"], jv)
+        assert max((v["action"] for v in jres), key=order.get) == case["expect"], case["id"]
+
+
 def test_js_case_level_block_count_equals_compare_md():
     cases = load_cases(CASES)
     js = _js(cases)

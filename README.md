@@ -1,20 +1,32 @@
-# GateKeep — AI 에이전트 행동 검문소
+# GateKeep: a checkpoint that stops hijacked AI agents before they act
+
+**English summary (for judges).** GateKeep sits between a city-service AI agent and its tools. Before a tool runs (payment, e-mail, file delete, external share, permission grant) it checks that single call against the citizen's own request with six fixed rules (R0-R5) and, if it blocks, writes the reason as an evidence line. No model, no training, no LLM call at runtime. It is a student, lightweight implementation of the same idea that Invariant Guardrails, Progent, CaMeL, AgentDojo's `tool_filter`, LlamaFirewall and Lakera Agent Behavior Defense pursue; our contribution is a small auditable rule set, a city tool pack and a public measurement, not a new idea.
+
+- **Measured on 146 cases** (81 attacks, 65 normal; AgentDojo + deepset + our own): blocks 75/81 attacks (92.6%), wrongly blocks 5/65 normal calls (7.7%); without the scope rule R1 it blocks 52/81 (64.2%). p95 check time is far below 5 ms. Two open-source text-only components (Rebuff heuristics, four Vigil YARA rules) block 2/81. Full table, method and limits: [results/compare.md](results/compare.md).
+- **Read the numbers with these caveats.** The allow-list used by R1 is taken from AgentDojo's ground-truth calls (an oracle); the normal tasks' tool responses are filler sentences, not the real files, so the 7.7% is probably an underestimate; attack calls assume the agent was fooled and we never measured how often a real LLM is fooled.
+- **Independent red-team fixes (v2).** A red team broke v1 three times out of three (renamed tool `wire_funds` was treated as a read; destination key `beneficiary_iban` and a space-split account number slipped through; Aadhaar/PAN numbers could be mailed out; `rm -r -f /` was not recognised; the bill-payment scene was blocked). v2 denies tools it cannot place (R0), matches destinations by normalized whole token and by argument-name patterns, recognises split shell flags and `run_command`, adds Aadhaar/PAN formats to R5, and introduces a CONFIRM verdict for values read from a document the user pointed to. On the 21-case red-team set v1 stopped 2 of 15 attacks and wrongly blocked 3 of 6 normal or bill-scene calls; v2 meets all expectations. That set was written after the bypasses were known, so it is a regression test, not evidence of general strength.
+- **Try it:** `python3 -m pytest -q`, `python3 scripts/demo.py`, or the static demo at https://ryugi62.github.io/gatekeep-chronoforge/demo/ (no login, no server).
+- **Authorship:** AI-assisted (Claude, Anthropic); the team lead reviewed the result. Third-party assets are listed under "Sources and licenses".
+
+---
+
+# GateKeep — AI 에이전트 행동 검문소 (한국어 상세)
 
 도시 서비스용 AI 에이전트가 **도구를 호출하기 직전**(송금·메일·파일 삭제·외부 전송·권한 부여)에 호출을 규칙으로 검문해 막고, 막은 이유(Evidence)를 감사 기록에 남긴다. 프롬프트 문장을 거르는 분류기가 아니라 **행동 단계 관문**이다. 에이전트가 속았더라도 위험한 행동은 실행되지 않는다.
 
-- 스펙: [SPEC.md](SPEC.md) (유비쿼터스 언어 ToolCall·Checkpoint·Rule·Verdict·Evidence, 숫자 성공 조건, Given/When/Then 7개, 비목표)
+- 스펙: [SPEC.md](SPEC.md) (유비쿼터스 언어 ToolCall·Checkpoint·Rule·Verdict·Evidence·CitedSource·CityPack, 숫자 성공 조건, Given/When/Then 11개, 비목표)
 - 실측표: [results/compare.md](results/compare.md) · 원자료 [results/compare.csv](results/compare.csv)
 - 저작 모드: AI 보조(Claude)로 코드를 작성했고 제작자가 검수했다. 제3자 자산은 아래 「출처」에 전부 밝힌다.
 
-## 어떻게 막나 (규칙 6개)
+## 어떻게 막나 (규칙 6개, 판정은 ALLOW·CONFIRM·BLOCK)
 | 규칙 | 막는 것 |
 |---|---|
-| R0 UnknownTool | 등록·추론되지 않은 도구 (기본 거부) |
+| R0 UnknownTool | 등록되지 않았고 이름 동사로 등급을 못 정한 도구 (기본 거부, 「모르는 이름 = 읽기」 아님) |
 | R1 OutOfScope | 사용자 요청 범위 밖의 쓰기·송금·삭제·권한 도구 (최소 권한) |
-| R2 TaintedDestination | 수신자·계좌·URL이 사용자 요청에는 없고 신뢰할 수 없는 글(웹·메일·도구 응답)에만 있는 호출 |
-| R3 AmountLimit | 상한 초과 금액이 사용자 요청에 없는 송금 |
-| R4 PathEscape | 작업 폴더 밖 삭제·`..`·위험 셸 명령 |
-| R5 SecretEgress | 외부 전송 인자에 들어간 API 키·개인 키·비밀번호 값 |
+| R2 TaintedDestination | 수신자·계좌·URL(인자 이름은 iban·account·beneficiary·to·email·url 등 패턴, 공백·하이픈 제거 후 전체 토큰 비교)이 사용자 요청에는 없고 신뢰할 수 없는 글에만 있는 호출. 사용자가 가리킨 문서에서만 나오면 CONFIRM |
+| R3 AmountLimit | 상한(설정값, `data/city_pack.json`) 초과 금액이 사용자 요청에 없는 송금. 사용자가 가리킨 문서에서만 나오면 CONFIRM |
+| R4 PathEscape | 작업 폴더 밖 삭제·`..`·위험 셸 명령(`rm -r -f /`, `run_command` 포함) |
+| R5 SecretEgress | 외부 전송 인자에 들어간 API 키·개인 키·비밀번호 값, Aadhaar·PAN 형식(시민이 요청에 직접 쓴 번호 제외) |
 
 ```
 python3 scripts/demo.py                          # 모의 도구 상자 시연: 정상 호출 통과, 주입된 cc 차단 + 감사 기록
@@ -50,5 +62,8 @@ gatekeep/infrastructure/  bench.py(실측 실행기) metrics.py
 ## 한계 (실측표 5절에 같은 내용)
 - 출처 추적(사용자 요청·허용 도구·신뢰할 수 없는 글)을 에이전트 런타임이 넘겨준다고 가정한다.
 - 허용된 수신자에게 가는 **본문 변조**, 한도 안 금액 변조, 행동 없는 오정보는 막지 못한다(자체 시나리오 `known-limit`로 일부러 넣어 놓쳤다고 표에 적음).
-- 수신자·금액을 문서에서 가져오는 정당한 작업은 오탐이 난다. 운영에서는 차단 대신 사용자 확인으로 풀어야 한다.
+- 수신자·금액을 문서에서 가져오는 정당한 작업: 사용자가 그 문서를 가리켰다고 런타임이 알려 주면 CONFIRM(사용자 1회 확인), 모르면 BLOCK. 146건 입력에는 이 표시가 없어 오탐 5건은 그대로다. CONFIRM은 고지서가 진짜인지 보증하지 않는다.
+- 허용 도구 목록(R1)이 정확하다는 가정: 벤치는 AgentDojo 정답 호출에서 뽑은 오라클을 쓴다. 정상 과제의 도구 응답은 채움 문장이다.
+- 레드팀 우회 입력(`data/redteam_cases.jsonl`)은 우회가 알려진 뒤 만든 회귀 시험이다. 일반 차단율 근거가 아니다.
+- 도구 이름 추론은 보조 장치다(`data/city_pack.json`에 도구를 명시 등록하면 추론을 쓰지 않는다).
 - 딥러닝 분류기와의 비교는 아직 없다(`scripts/classroom_deberta.py` = 강의실 PC용 실행카드, 미실행).

@@ -23,8 +23,15 @@ def test_three_examples_give_expected_verdicts():
     script = html.split("<script>")[-1].split("</script>")[0]
     js = "var gk=require(%r);var window={};%s;" % (os.path.join(DEMO, "gatekeep.js"), script.split("function $")[0])
     js += ("var r={};for(var k in EX){var e=EX[k];r[k]=gk.guard({userRequest:e.req,allowedTools:e.tools.split(/[,\\n]/).map(s=>s.trim()).filter(Boolean),"
-           "untrustedTexts:e.unt?[e.unt]:[]},[].concat(JSON.parse(e.calls))).map(v=>[v.action,v.evidences.map(x=>x.ruleId)]);}console.log(JSON.stringify(r));")
+           "untrustedTexts:e.unt?[e.unt]:[],citedSources:(e.cited&&e.unt)?[e.unt]:[]},[].concat(JSON.parse(e.calls))).map(v=>[v.action,v.evidences.map(x=>x.ruleId)]);}console.log(JSON.stringify(r));")
     out = json.loads(subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True).stdout)
     assert out["benign"] == [["ALLOW", []]]
     assert out["inject"][0] == ["ALLOW", []] and out["inject"][1][0] == "BLOCK" and "R1" in out["inject"][1][1]
     assert out["leak"][0][0] == "BLOCK" and "R5" in out["leak"][0][1]
+    assert out["bill"][0][0] == "CONFIRM" and "R2" in out["bill"][0][1]
+    assert out["bill_web"][0][0] == "BLOCK"
+
+
+def test_demo_page_has_cited_checkbox_and_confirm_style():
+    html = open(os.path.join(DEMO, "index.html"), encoding="utf-8").read()
+    assert 'id="cited"' in html and ".v.CONFIRM" in html
